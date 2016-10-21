@@ -1078,6 +1078,227 @@ public:
 
 /* ************************************************************************** */
 
+static constexpr auto MAX_NUMBER_OF_BINS = 64;
+
+/* Compute the area of a triangle */
+static float triangle_area(const glm::vec3 &v1, const glm::vec3 &v2, const glm::vec3 &v3)
+{
+	const auto e1 = v2 - v1;
+	const auto e2 = v3 - v2;
+	const auto cross = glm::cross(e1, e2);
+	return glm::length(cross) * 0.5f;
+}
+
+struct TriangleData {
+	glm::vec3 v1, v2, v3;
+	float area;
+};
+
+struct TriangleBin {
+	std::vector<TriangleData> triangles;
+	float area_min;
+	float area_max;
+};
+
+template <typename T>
+static inline auto pow2(T x)
+{
+	return x * x;
+}
+
+template <typename T>
+static inline auto pow4(T x)
+{
+	return pow2(pow2(x));
+}
+
+template <typename T>
+static inline auto pow64(T x)
+{
+	return pow4(pow4(pow4(x)));
+}
+
+struct TriangleMesh {
+	TriangleBin bins[MAX_NUMBER_OF_BINS];
+	float area_max;
+	float area_min;
+	float area_max_inv;
+	float area_min_inv;
+	int max_bins;
+
+	TriangleMesh(float max_area, int maxbins)
+	    : area_max(max_area)
+	    , area_min(max_area * pow64(0.5f))
+	    , area_max_inv(1.0f / area_max)
+	    , area_min_inv(pow64(2.0f) / area_max)
+	    , max_bins(maxbins)
+	{
+		auto bin_area_min = area_max;
+		auto bin_area_max = 0.0f;
+
+		for (auto i = 0; i < max_bins; ++i) {
+			bin_area_max = bin_area_min;
+			bin_area_min = 0.5f * bin_area_max;
+
+			TriangleBin &bin = bins[i];
+			bin.area_min = bin_area_min;
+			bin.area_max = bin_area_max;
+		}
+	}
+};
+
+static inline auto log2_int_fl(float x)
+{
+	/* XXX for now just using int conversion and bit walking,
+	 * there are more efficient methods described here:
+	 * https://graphics.stanford.edu/~seander/bithacks.html
+	 */
+
+	auto v = static_cast<unsigned int>(x);
+	auto r = 0;
+
+	while (v >>= 1) {
+		++r;
+	}
+
+	return r;
+}
+
+static TriangleBin *find_bin(TriangleMesh &triangle_mesh, const float area)
+{
+	const auto index = log2_int_fl(triangle_mesh.area_max / area);
+	return (index < triangle_mesh.max_bins) ? &triangle_mesh.bins[index] : nullptr;
+}
+
+#define DEBUG_PRINT
+
+/* Scatter points using dart throwing algorithm presented in
+ * http://peterwonka.net/Publications/pdfs/2009.EGSR.Cline.PoissonSamplingOnSurfaces.pdf
+ */
+class ScatterPoinstNode : public Node {
+public:
+	ScatterPoinstNode()
+	    : Node("Scatter Points")
+	{
+		addInput("input");
+		addOutput("ouput");
+
+		add_prop("Points Count", property_type::prop_int);
+		set_prop_min_max(1, 100000);
+		set_prop_default_value_int(1000);
+	}
+
+	void process() override
+	{
+		for (auto primitive : primitive_iterator(this->m_collection, Mesh::id)) {
+			auto mesh = static_cast<Mesh *>(primitive);
+
+			/* Create triangle data */
+			auto points = mesh->points();
+			auto polys = mesh->polys();
+
+			auto triangle_count = 0ul;
+
+			for (auto i = 0ul; i < polys->size(); ++i) {
+				auto poly = (*polys)[i];
+
+				if (poly[3] != INVALID_INDEX) {
+					triangle_count += 2;
+				}
+				else {
+					++triangle_count;
+				}
+			}
+
+#ifdef DEBUG_PRINT
+			std::cerr << "Triangle count: " << triangle_count << '\n';
+#endif
+
+			std::vector<TriangleData> triangle_data;
+			triangle_data.reserve(triangle_count);
+
+			auto min_area = std::numeric_limits<float>::max();
+			auto max_area = std::numeric_limits<float>::min();
+
+			for (auto i = 0ul; i < polys->size(); ++i) {
+				auto poly = (*polys)[i];
+
+				if (poly[3] != INVALID_INDEX) {
+					const auto &v1 = (*points)[poly[0]];
+					const auto &v2 = (*points)[poly[1]];
+					const auto &v3 = (*points)[poly[2]];
+					const auto &v4 = (*points)[poly[3]];
+
+					TriangleData data124;
+					data124.v1 = v1;
+					data124.v2 = v2;
+					data124.v3 = v4;
+					data124.area = triangle_area(v1, v2, v4);
+
+					min_area = std::min(min_area, data124.area);
+					max_area = std::max(max_area, data124.area);
+					triangle_data.push_back(data124);
+
+					TriangleData data134;
+					data134.v1 = v1;
+					data134.v2 = v3;
+					data134.v3 = v4;
+					data134.area = triangle_area(v1, v3, v4);
+
+					min_area = std::min(min_area, data134.area);
+					max_area = std::max(max_area, data134.area);
+					triangle_data.push_back(data134);
+				}
+				else {
+					const auto &v1 = (*points)[poly[0]];
+					const auto &v2 = (*points)[poly[1]];
+					const auto &v3 = (*points)[poly[2]];
+
+					TriangleData data;
+					data.v1 = v1;
+					data.v2 = v2;
+					data.v3 = v3;
+					data.area = triangle_area(v1, v2, v3);
+
+					min_area = std::min(min_area, data.area);
+					max_area = std::max(max_area, data.area);
+					triangle_data.push_back(data);
+				}
+			}
+
+#ifdef DEBUG_PRINT
+			std::cerr << "Mininum area: " << min_area << '\n';
+			std::cerr << "Maxinum area: " << max_area << '\n';
+#endif
+
+			/* Put triangles into bins. */
+			TriangleMesh triangle_mesh(max_area, 4);
+
+#ifdef DEBUG_PRINT
+			std::cerr << "TriangleMesh min area: " << triangle_mesh.area_min << '\n';
+			std::cerr << "TriangleMesh max area: " << triangle_mesh.area_max << '\n';
+#endif
+
+			for (const TriangleData &triangle : triangle_data) {
+				auto bin = find_bin(triangle_mesh, triangle.area);
+
+				if (bin) {
+					bin->triangles.push_back(triangle);
+				}
+			}
+
+#ifdef DEBUG_PRINT
+			for (auto i = 0; i < triangle_mesh.max_bins; ++i) {
+				const TriangleBin &bin = triangle_mesh.bins[i];
+				std::cerr << "Bin " << i << ", number of triangles: " << bin.triangles.size() << '\n';
+			}
+#endif
+		}
+	}
+};
+
+/* ************************************************************************** */
+
 void register_builtin_nodes(NodeFactory *factory)
 {
 	REGISTER_NODE("Geometry", "Box", CreateBoxNode);
@@ -1093,4 +1314,5 @@ void register_builtin_nodes(NodeFactory *factory)
 	REGISTER_NODE("Geometry", "Color", ColorNode);
 	REGISTER_NODE("Geometry", "Merge Collection", CollectionMergeNode);
 	REGISTER_NODE("Geometry", "Point Cloud", CreatePointCloudNode);
+	REGISTER_NODE("Geometry", "Scatter Point", ScatterPoinstNode);
 }
