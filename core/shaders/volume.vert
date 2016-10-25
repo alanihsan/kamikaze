@@ -10,6 +10,6 @@ smooth out vec3 UV;
 
 void main()
 {
-	gl_Position = MVP * matrix * vec4(vertex.xyz, 1.0);
+	gl_Position = vec4(vertex.xyz, 1.0);
 	UV = (vertex - offset);
 }

@@ -26,6 +26,7 @@
 
 #include <ego/bufferobject.h>
 #include <ego/program.h>
+#include <ego/texture.h>
 
 #include <glm/glm.hpp>
 
@@ -72,6 +73,7 @@ public:
 class RenderBuffer {
 	ego::BufferObject::Ptr m_buffer_data = nullptr;
 	ego::Program m_program;
+	ego::Texture3D::Ptr m_texture;
 	size_t m_elements = 0;
 
 	DrawParams m_params;
@@ -80,6 +82,7 @@ class RenderBuffer {
 	bool m_require_color = false;
 	bool m_can_outline = false;
 	bool m_index_drawing = false;
+	bool m_has_texture = false;
 
 public:
 	void set_shader_source(int shader_type, const std::string &source, std::ostream &os = std::cerr);
@@ -127,6 +130,8 @@ public:
 	void render(const ViewerContext &context);
 
 	ego::Program *program();
+
+	ego::Texture3D *add_texture_3D();
 
 private:
 	void init();
