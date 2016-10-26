@@ -79,7 +79,7 @@ DepsObjectNode::DepsObjectNode(Object *object)
 void DepsObjectNode::pre_process()
 {
 	/* TODO: what's the purpose of this again? */
-	m_object->collection(nullptr);
+	//m_object->collection(nullptr);
 }
 
 void DepsObjectNode::process(const Context & /*context*/, TaskNotifier */*notifier*/)
@@ -87,7 +87,17 @@ void DepsObjectNode::process(const Context & /*context*/, TaskNotifier */*notifi
 	/* The graph should already have been updated. */
 	auto graph = m_object->graph();
 	auto output_node = graph->output();
-	m_object->collection(output_node->collection());
+
+	if (m_object->collection()) {
+		delete m_object->collection();
+	}
+
+	if (output_node->collection()) {
+		m_object->collection(output_node->collection()->copy());
+	}
+	else {
+		m_object->collection(nullptr);
+	}
 }
 
 Object *DepsObjectNode::object()
@@ -427,9 +437,10 @@ void Depsgraph::evaluate_ex(const Context &context, DepsNode *root, TaskNotifier
 	std::cerr << "Stack size: " << m_stack.size() << '\n';
 #endif
 
-	for (auto iter = m_stack.rbegin(); iter != m_stack.rend(); ++iter) {
+	for (auto iter = m_stack.begin(); iter != m_stack.end(); ++iter) {
 		DepsNode *node = *iter;
 		node->pre_process();
+		std::cerr << "Pre processing node: " << node->name() << '\n';
 	}
 
 	for (auto iter = m_stack.rbegin(); iter != m_stack.rend(); ++iter) {
